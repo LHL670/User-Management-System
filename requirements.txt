@@ -1,0 +1,6 @@
+﻿fastapi
+uvicorn
+pandas
+python-multipart
+requests
+httpx

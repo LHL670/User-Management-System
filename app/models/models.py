@@ -1,4 +1,4 @@
-﻿from pydantic import BaseModel, field_validator
+﻿from pydantic import BaseModel, field_validator, ConfigDict
 
 class UserCreate(BaseModel):
     name: str
@@ -21,7 +21,6 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     age: int
 
-    # 我們必須把 UserCreate 裡的年齡驗證邏輯搬過來 (或是共用)
     # 確保更新的時候，年齡也不能寫 999
     @field_validator('age')
     def age_must_be_realistic(cls, v):
@@ -30,4 +29,5 @@ class UserUpdate(BaseModel):
         return v
 
 class UserResponse(UserCreate):
-    pass
+    #  讓 Pydantic 可以讀取 SQLAlchemy 物件
+    model_config = ConfigDict(from_attributes=True)

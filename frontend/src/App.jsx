@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users, Upload, Trash2, Plus, RefreshCw, BarChart, AlertCircle, FileText,
-  Search, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, Filter, X, ChevronDown, ChevronUp
+  Search, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, Filter, X, ChevronDown, ChevronUp,
+  Pencil, Save // [修正] 補上這裡缺少的 Pencil 和 Save 圖示
 } from 'lucide-react';
 
-// 設定後端 API 位置 (依據環境自動判斷)
+// 設定後端 API 位置
 const getApiBaseUrl = () => {
   if (window.location.host === 'localhost:8000') return '';
   return 'http://localhost:8000';
@@ -12,7 +13,7 @@ const getApiBaseUrl = () => {
 
 const API_BASE_URL = getApiBaseUrl();
 
-// 模擬數據 (當後端無法連接時使用)
+// 模擬數據
 const MOCK_USERS = [
   { name: 'Bulbasaur', age: 14 }, { name: 'Ivysaur', age: 13 }, { name: 'Venusaur', age: 24 },
   { name: 'Charmander', age: 22 }, { name: 'Charmeleon', age: 13 }, { name: 'Charizard', age: 36 },
@@ -40,12 +41,16 @@ const App = () => {
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [searchTerm, setSearchTerm] = useState('');
   const [ageRange, setAgeRange] = useState({ min: '', max: '' });
-  const [showAllStats, setShowAllStats] = useState(false); // [新增] 控制是否顯示完整排名
+  const [showAllStats, setShowAllStats] = useState(false);
 
   // 表單與上傳狀態
   const [newUser, setNewUser] = useState({ name: '', age: '' });
   const [file, setFile] = useState(null);
   const [uploadMsg, setUploadMsg] = useState('');
+
+  // [新增] 編輯模式狀態
+  const [editingUser, setEditingUser] = useState(null); // 當前正在編輯的使用者物件 { name, age }
+  const [editAge, setEditAge] = useState(''); // 編輯框中的年齡值
 
   // 初始化載入數據
   useEffect(() => {
@@ -101,14 +106,10 @@ const App = () => {
         body: JSON.stringify({ name: newUser.name, age: parseInt(newUser.age) })
       });
 
-      if (res.status === 409) {
-        alert('建立失敗：使用者名稱已存在 (Conflict)');
-        return;
-      }
+      if (res.status === 409) return alert('建立失敗：使用者名稱已存在 (Conflict)');
       if (res.status === 422) {
         const errData = await res.json();
-        alert(`驗證錯誤：${errData.detail[0]?.msg || JSON.stringify(errData)}`);
-        return;
+        return alert(`驗證錯誤：${errData.detail[0]?.msg || JSON.stringify(errData)}`);
       }
       if (!res.ok) throw new Error('Create failed');
 
@@ -117,6 +118,36 @@ const App = () => {
     } catch (err) {
       alert('發生錯誤：' + err.message);
     }
+  };
+
+  // [新增] 處理更新使用者 (PUT API)
+  const handleUpdateUser = async (e) => {
+    e.preventDefault();
+    if (isDemoMode) return alert("展示模式下無法實際操作。");
+
+    try {
+      // 呼叫 PUT API: /users/{name}
+      const res = await fetch(`${API_BASE_URL}/users/${editingUser.name}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ age: parseInt(editAge) }) // 只傳送需要更新的 age (後端 UserUpdate schema 僅需 age)
+      });
+
+      if (!res.ok) throw new Error('Update failed');
+
+      // 更新成功後，關閉編輯視窗並重整資料
+      setEditingUser(null);
+      setEditAge('');
+      fetchAllData();
+    } catch (err) {
+      alert('更新失敗：' + err.message);
+    }
+  };
+
+  // [新增] 開啟編輯視窗 helper
+  const openEditModal = (user) => {
+    setEditingUser(user);
+    setEditAge(user.age);
   };
 
   const handleDeleteUser = async (name) => {
@@ -138,11 +169,7 @@ const App = () => {
 
   const handleFileUpload = async (e) => {
     e.preventDefault();
-    if (!file) {
-      alert("請先選擇 CSV 檔案");
-      return;
-    }
-
+    if (!file) return alert("請先選擇 CSV 檔案");
     if (isDemoMode) {
       alert("展示模式下無法實際上傳檔案。");
       setUploadMsg("模擬上傳成功！");
@@ -175,68 +202,43 @@ const App = () => {
     }
   };
 
-  // --- 3. 排序與篩選邏輯 (前端處理) ---
+  // --- 資料處理邏輯 ---
   const handleSort = (key) => {
     let direction = 'asc';
-    if (sortConfig.key === key && sortConfig.direction === 'asc') {
-      direction = 'desc';
-    }
+    if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
     setSortConfig({ key, direction });
   };
 
   const processedUsers = useMemo(() => {
     let result = [...users];
+    if (searchTerm) result = result.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    if (ageRange.min !== '') result = result.filter(u => u.age >= parseInt(ageRange.min));
+    if (ageRange.max !== '') result = result.filter(u => u.age <= parseInt(ageRange.max));
 
-    // A. 篩選 (Filter)
-    if (searchTerm) {
-      result = result.filter(u => u.name.toLowerCase().includes(searchTerm.toLowerCase()));
-    }
-    if (ageRange.min !== '') {
-      result = result.filter(u => u.age >= parseInt(ageRange.min));
-    }
-    if (ageRange.max !== '') {
-      result = result.filter(u => u.age <= parseInt(ageRange.max));
-    }
-
-    // B. 排序 (Sort)
     if (sortConfig.key) {
       result.sort((a, b) => {
-        if (a[sortConfig.key] < b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? -1 : 1;
-        }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? 1 : -1;
-        }
+        if (a[sortConfig.key] < b[sortConfig.key]) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (a[sortConfig.key] > b[sortConfig.key]) return sortConfig.direction === 'asc' ? 1 : -1;
         return 0;
       });
     }
     return result;
   }, [users, sortConfig, searchTerm, ageRange]);
 
-  // --- 4. 統計圖表資料處理 (已加入顯示完整排名邏輯) ---
   const displayStats = useMemo(() => {
-    // 1. 轉換為陣列並排序
     const statsArray = Object.entries(stats).map(([group, avg]) => ({
       group,
       avg: parseFloat(avg)
     })).sort((a, b) => b.avg - a.avg);
 
-    // 2. 計算最大值 (用於繪圖比例)
     const maxVal = statsArray.length > 0 ? statsArray[0].avg : 0;
-
-    // 3. 根據 showAllStats 決定回傳全部或前 5 名
     const data = showAllStats ? statsArray : statsArray.slice(0, 5);
-
     return { data, maxVal, totalCount: statsArray.length };
   }, [stats, showAllStats]);
 
-
-  // --- Render Helpers ---
   const SortIcon = ({ columnKey }) => {
     if (sortConfig.key !== columnKey) return <ArrowUpDown size={14} className="opacity-30" />;
-    return sortConfig.direction === 'asc'
-      ? <ArrowUp size={14} className="text-blue-500" />
-      : <ArrowDown size={14} className="text-blue-500" />;
+    return sortConfig.direction === 'asc' ? <ArrowUp size={14} className="text-blue-500" /> : <ArrowDown size={14} className="text-blue-500" />;
   };
 
   return (
@@ -351,7 +353,7 @@ const App = () => {
                     <label htmlFor="csvInput" className="cursor-pointer flex flex-col items-center">
                       <FileText className="text-gray-400 mb-2" size={32} />
                       <span className="text-sm text-gray-600 dark:text-gray-400">
-                        {file ? file.name : "點擊選擇檔案"}
+                        {file ? file.name : "點擊選擇 backend_users.csv"}
                       </span>
                     </label>
                   </div>
@@ -366,7 +368,7 @@ const App = () => {
                 </form>
               </div>
 
-              {/* 3. Stats Card (Ranking Chart with Toggle) */}
+              {/* 3. Stats Card */}
               <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm transition-colors flex flex-col">
                 <div className="flex justify-between items-center mb-4">
                   <h2 className="text-lg font-semibold flex items-center gap-2 dark:text-white">
@@ -378,7 +380,6 @@ const App = () => {
                   </span>
                 </div>
 
-                {/* Scrollable Area for Chart */}
                 <div className="space-y-4 flex-1 overflow-y-auto max-h-[300px] custom-scrollbar pr-2">
                   {displayStats.data.length === 0 ? (
                     <p className="text-gray-400 text-sm text-center py-4">尚無統計數據</p>
@@ -399,7 +400,6 @@ const App = () => {
                           </span>
                           <span className="text-gray-500 dark:text-gray-400">{item.avg.toFixed(1)} 歲</span>
                         </div>
-                        {/* Bar Chart Visual */}
                         <div className="h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-orange-500 dark:bg-orange-400 rounded-full transition-all duration-500"
@@ -411,7 +411,6 @@ const App = () => {
                   )}
                 </div>
 
-                {/* Show All Toggle Button */}
                 {displayStats.totalCount > 5 && (
                   <button
                     onClick={() => setShowAllStats(!showAllStats)}
@@ -425,16 +424,14 @@ const App = () => {
                   </button>
                 )}
               </div>
-
             </div>
 
-            {/* Right Column: User List (with Search & Sort) */}
-            <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden flex flex-col h-[850px] transition-colors">
+            {/* Right Column: User List */}
+            <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl shadow-sm overflow-hidden flex flex-col h-[850px] transition-colors relative">
 
               {/* Filter & Search Bar */}
               <div className="p-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 space-y-3">
                 <div className="flex flex-col sm:flex-row gap-3">
-                  {/* Name Search */}
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-2.5 text-gray-400" size={18} />
                     <input
@@ -451,7 +448,6 @@ const App = () => {
                     )}
                   </div>
 
-                  {/* Age Range */}
                   <div className="flex items-center gap-2">
                     <div className="relative w-24">
                       <input
@@ -491,18 +487,18 @@ const App = () => {
               {/* Table Header */}
               <div className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600 grid grid-cols-12 gap-4 p-4 text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase tracking-wider sticky top-0 z-10">
                 <div
-                  className="col-span-6 flex items-center gap-2 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 select-none"
+                  className="col-span-5 flex items-center gap-2 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 select-none"
                   onClick={() => handleSort('name')}
                 >
                   NAME <SortIcon columnKey="name" />
                 </div>
                 <div
-                  className="col-span-4 flex items-center gap-2 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 select-none"
+                  className="col-span-3 flex items-center gap-2 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 select-none"
                   onClick={() => handleSort('age')}
                 >
                   AGE <SortIcon columnKey="age" />
                 </div>
-                <div className="col-span-2 text-right">ACTION</div>
+                <div className="col-span-4 text-right">ACTION</div>
               </div>
 
               {/* User List Body */}
@@ -516,9 +512,17 @@ const App = () => {
                   <div className="divide-y divide-gray-100 dark:divide-gray-700">
                     {processedUsers.map((user, idx) => (
                       <div key={`${user.name}-${idx}`} className="grid grid-cols-12 gap-4 p-4 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors group items-center">
-                        <div className="col-span-6 font-medium text-gray-900 dark:text-gray-100 truncate">{user.name}</div>
-                        <div className="col-span-4 text-gray-600 dark:text-gray-400">{user.age}</div>
-                        <div className="col-span-2 text-right">
+                        <div className="col-span-5 font-medium text-gray-900 dark:text-gray-100 truncate">{user.name}</div>
+                        <div className="col-span-3 text-gray-600 dark:text-gray-400">{user.age}</div>
+                        <div className="col-span-4 text-right flex justify-end gap-2">
+                          {/* [新增] 編輯按鈕 */}
+                          <button
+                            onClick={() => openEditModal(user)}
+                            className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1.5 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                            title="編輯"
+                          >
+                            <Pencil size={18} />
+                          </button>
                           <button
                             onClick={() => handleDeleteUser(user.name)}
                             className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
@@ -532,8 +536,52 @@ const App = () => {
                   </div>
                 )}
               </div>
-            </div>
 
+              {/* [新增] 編輯視窗 (Modal) */}
+              {editingUser && (
+                <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                  <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-xl w-full max-w-sm mx-4 border border-gray-100 dark:border-gray-700">
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4">編輯使用者</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm text-gray-500 mb-1">姓名 (不可修改)</label>
+                        <input
+                          type="text"
+                          value={editingUser.name}
+                          disabled
+                          className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 dark:text-gray-300 mb-1">新的年齡</label>
+                        <input
+                          type="number"
+                          value={editAge}
+                          onChange={(e) => setEditAge(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                        <button
+                          onClick={() => setEditingUser(null)}
+                          className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700"
+                        >
+                          取消
+                        </button>
+                        <button
+                          onClick={handleUpdateUser}
+                          className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+                        >
+                          <Save size={18} /> 儲存
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
           </div>
         </div>
       </div>

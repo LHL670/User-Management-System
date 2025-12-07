@@ -18,5 +18,16 @@ class UserCreate(BaseModel):
             raise ValueError('Age is not valid')
         return v
 
+class UserUpdate(BaseModel):
+    age: int
+
+    # 我們必須把 UserCreate 裡的年齡驗證邏輯搬過來 (或是共用)
+    # 確保更新的時候，年齡也不能寫 999
+    @field_validator('age')
+    def age_must_be_realistic(cls, v):
+        if v < 0 or v >= 150:
+            raise ValueError('Age is not valid')
+        return v
+
 class UserResponse(UserCreate):
     pass

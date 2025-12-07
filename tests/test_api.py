@@ -39,5 +39,28 @@ class TestUserAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("Age is not valid", response.text)
 
+    def test_update_user_success(self):
+        # 1. 先建立一個使用者
+        self.client.post("/users", json={"name": "UpdateTarget", "age": 20})
+        
+        # 2. 呼叫 PUT 更新年齡為 30
+        response = self.client.put("/users/UpdateTarget", json={"age": 30})
+        
+        # 3. 驗證回應
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["age"], 30)
+        self.assertEqual(response.json()["name"], "UpdateTarget")
+
+    def test_update_user_not_found(self):
+        # 更新一個不存在的使用者
+        response = self.client.put("/users/Ghost", json={"age": 30})
+        self.assertEqual(response.status_code, 404)
+
+    def test_update_user_invalid_age(self):
+        # 驗證更新時的防呆機制 (Bonus TC2 也要適用於更新)
+        self.client.post("/users", json={"name": "ValidUser", "age": 20})
+        response = self.client.put("/users/ValidUser", json={"age": 999})
+        self.assertEqual(response.status_code, 422)
+
 if __name__ == '__main__':
     unittest.main()

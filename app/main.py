@@ -4,6 +4,11 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from .routers.routers import router as user_router
 from fastapi.middleware.cors import CORSMiddleware
+from .database.database import engine, Base
+from .models.db_models import *
+
+# 自動建立資料表 (如果不存在的話)
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Mock User API",

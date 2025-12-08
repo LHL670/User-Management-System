@@ -5,3 +5,6 @@ python-multipart
 requests
 httpx
 sqlalchemy
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart

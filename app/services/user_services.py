@@ -90,3 +90,22 @@ class UserService:
         df['group'] = df['name'].astype(str).str[0]
         result = df.groupby('group')['age'].mean().to_dict()
         return result
+    
+    @staticmethod
+    def export_users_csv(db: Session):
+        # 1. 使用 Pandas 直接從 SQL 讀取 DataFrame
+        statement = db.query(User).statement
+        df = pd.read_sql(statement, db.bind)
+        
+        # 2. 移除 id 欄位 (通常匯出給使用者看不需要系統 id)
+        if 'id' in df.columns:
+            df = df.drop(columns=['id'])
+
+        # 3. 轉為 CSV String Buffer
+        stream = io.StringIO()
+        # index=False 代表不要匯出 Pandas 的索引值 (0, 1, 2...)
+        df.to_csv(stream, index=False)
+        
+        # 4. 指標回到開頭，準備讀取
+        stream.seek(0)
+        return stream

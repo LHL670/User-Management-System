@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Users, Upload, Trash2, Plus, RefreshCw, BarChart, AlertCircle, FileText,
   Search, ArrowUpDown, ArrowUp, ArrowDown, Moon, Sun, Filter, X, ChevronDown, ChevronUp,
-  Pencil, Save // [修正] 補上這裡缺少的 Pencil 和 Save 圖示
+  Pencil, Save, LogIn, LogOut, Download, Lock // [新增] 引入登入、匯出、鎖定圖示
 } from 'lucide-react';
 
 // 設定後端 API 位置
@@ -48,14 +48,54 @@ const App = () => {
   const [file, setFile] = useState(null);
   const [uploadMsg, setUploadMsg] = useState('');
 
-  // [新增] 編輯模式狀態
-  const [editingUser, setEditingUser] = useState(null); // 當前正在編輯的使用者物件 { name, age }
-  const [editAge, setEditAge] = useState(''); // 編輯框中的年齡值
+  // 編輯模式狀態
+  const [editingUser, setEditingUser] = useState(null);
+  const [editAge, setEditAge] = useState('');
+
+  // [新增] 認證狀態 (JWT)
+  const [token, setToken] = useState(localStorage.getItem('access_token')); // 嘗試從 LocalStorage 讀取
+  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' });
 
   // 初始化載入數據
   useEffect(() => {
     fetchAllData();
   }, []);
+
+  // --- 認證邏輯 ---
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    try {
+      // 根據 OAuth2PasswordRequestForm，必須使用 Form Data 傳送
+      const formData = new FormData();
+      formData.append('username', loginForm.username);
+      formData.append('password', loginForm.password);
+
+      const res = await fetch(`${API_BASE_URL}/token`, {
+        method: 'POST',
+        body: formData, // 不設定 Content-Type，瀏覽器會自動設為 multipart/form-data
+      });
+
+      if (!res.ok) throw new Error('登入失敗，請檢查帳號密碼 (預設: admin / secret)');
+
+      const data = await res.json();
+      const accessToken = data.access_token;
+
+      setToken(accessToken);
+      localStorage.setItem('access_token', accessToken); // 持久化 Token
+      setShowLoginModal(false);
+      setLoginForm({ username: '', password: '' });
+      alert('登入成功！');
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleLogout = () => {
+    setToken(null);
+    localStorage.removeItem('access_token');
+    alert('已登出');
+  };
 
   // --- API 呼叫邏輯 ---
   const fetchAllData = async () => {
@@ -89,10 +129,17 @@ const App = () => {
     setStats(data);
   };
 
+  // [新增] 匯出 CSV (Public API)
+  const handleExportCsv = () => {
+    if (isDemoMode) return alert("展示模式下無法匯出。");
+    // 直接開啟連結即可觸發瀏覽器下載
+    window.location.href = `${API_BASE_URL}/users/export`;
+  };
+
   const handleCreateUser = async (e) => {
     e.preventDefault();
     if (isDemoMode) {
-      alert("展示模式下無法實際寫入資料庫，但會模擬新增效果。");
+      alert("展示模式無法寫入。");
       const mockNewUser = { name: newUser.name, age: parseInt(newUser.age) };
       setUsers([...users, mockNewUser]);
       setNewUser({ name: '', age: '' });
@@ -120,22 +167,20 @@ const App = () => {
     }
   };
 
-  // [新增] 處理更新使用者 (PUT API)
+  // 更新使用者 (Public API)
   const handleUpdateUser = async (e) => {
     e.preventDefault();
-    if (isDemoMode) return alert("展示模式下無法實際操作。");
+    if (isDemoMode) return alert("展示模式無法操作。");
 
     try {
-      // 呼叫 PUT API: /users/{name}
       const res = await fetch(`${API_BASE_URL}/users/${editingUser.name}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ age: parseInt(editAge) }) // 只傳送需要更新的 age (後端 UserUpdate schema 僅需 age)
+        body: JSON.stringify({ age: parseInt(editAge) })
       });
 
       if (!res.ok) throw new Error('Update failed');
 
-      // 更新成功後，關閉編輯視窗並重整資料
       setEditingUser(null);
       setEditAge('');
       fetchAllData();
@@ -144,12 +189,12 @@ const App = () => {
     }
   };
 
-  // [新增] 開啟編輯視窗 helper
   const openEditModal = (user) => {
     setEditingUser(user);
     setEditAge(user.age);
   };
 
+  // [修改] 刪除使用者 (Protected API)
   const handleDeleteUser = async (name) => {
     if (!confirm(`確定要刪除使用者 ${name} 嗎?`)) return;
 
@@ -158,8 +203,28 @@ const App = () => {
       return;
     }
 
+    // 檢查是否有 Token
+    if (!token) {
+      alert("權限不足：刪除操作需要登入 (Admin)");
+      setShowLoginModal(true);
+      return;
+    }
+
     try {
-      const res = await fetch(`${API_BASE_URL}/users/${name}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE_URL}/users/${name}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}` // [關鍵] 帶入 JWT
+        }
+      });
+
+      if (res.status === 401) {
+        alert("Token 無效或過期，請重新登入");
+        setToken(null);
+        setShowLoginModal(true);
+        return;
+      }
+
       if (!res.ok) throw new Error('Delete failed');
       fetchAllData();
     } catch (err) {
@@ -167,13 +232,15 @@ const App = () => {
     }
   };
 
+  // [修改] 批次上傳 (Protected API)
   const handleFileUpload = async (e) => {
     e.preventDefault();
     if (!file) return alert("請先選擇 CSV 檔案");
-    if (isDemoMode) {
-      alert("展示模式下無法實際上傳檔案。");
-      setUploadMsg("模擬上傳成功！");
-      setFile(null);
+    if (isDemoMode) return alert("展示模式無法上傳。");
+
+    if (!token) {
+      alert("權限不足：上傳操作需要登入 (Admin)");
+      setShowLoginModal(true);
       return;
     }
 
@@ -184,8 +251,19 @@ const App = () => {
       setUploadMsg('上傳處理中...');
       const res = await fetch(`${API_BASE_URL}/users/upload`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}` // [關鍵] 帶入 JWT
+        },
         body: formData,
       });
+
+      if (res.status === 401) {
+        setUploadMsg("上傳失敗：權限驗證未通過");
+        alert("Token 無效或過期，請重新登入");
+        setToken(null);
+        setShowLoginModal(true);
+        return;
+      }
 
       if (!res.ok) {
         const errData = await res.json();
@@ -256,7 +334,24 @@ const App = () => {
               <p className="text-gray-500 dark:text-gray-400 text-sm mt-1">Backend Hands-on Practice Interface</p>
             </div>
 
-            <div className="flex gap-3 items-center">
+            <div className="flex flex-wrap gap-3 items-center">
+              {/* 登入狀態顯示 */}
+              {token ? (
+                <div className="flex items-center gap-3 mr-2">
+                  <span className="text-xs bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full flex items-center gap-1">
+                    <Lock size={12} /> Admin
+                  </span>
+                  <button onClick={handleLogout} className="text-gray-500 hover:text-red-500 transition-colors" title="登出">
+                    <LogOut size={20} />
+                  </button>
+                </div>
+              ) : (
+                <button onClick={() => setShowLoginModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm font-medium shadow-sm">
+                  <LogIn size={16} /> 登入
+                </button>
+              )}
+
+              {/* 深色模式切換 */}
               <button
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-gray-600 dark:text-gray-300"
@@ -265,14 +360,13 @@ const App = () => {
                 {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
               </button>
 
-              <a
-                href="/docs"
-                target="_blank"
-                className="flex items-center gap-2 px-4 py-2 bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/50 rounded-lg transition-colors text-sm font-medium border border-green-200 dark:border-green-800"
+              {/* CSV 匯出 (新增) */}
+              <button
+                onClick={handleExportCsv}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 hover:bg-purple-100 rounded-lg transition-colors text-sm font-medium border border-purple-200 dark:border-purple-800"
               >
-                <FileText size={16} />
-                <span className="hidden sm:inline">Swagger Docs</span>
-              </a>
+                <Download size={16} /> <span className="hidden sm:inline">匯出 CSV</span>
+              </button>
 
               <button
                 onClick={fetchAllData}
@@ -336,11 +430,18 @@ const App = () => {
                 </form>
               </div>
 
-              {/* 2. CSV Upload Card */}
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm transition-colors">
+              {/* 2. CSV Upload Card (Protected) */}
+              <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm transition-colors relative">
                 <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 dark:text-white">
                   <Upload size={20} className="text-purple-600 dark:text-purple-400" /> 批次上傳 (CSV)
                 </h2>
+                {/* 鎖定遮罩 (未登入時顯示) */}
+                {!token && (
+                  <div className="absolute top-4 right-4 text-xs bg-gray-200 dark:bg-gray-700 text-gray-500 px-2 py-1 rounded flex items-center gap-1">
+                    <Lock size={10} /> 需要登入
+                  </div>
+                )}
+
                 <form onSubmit={handleFileUpload} className="space-y-4">
                   <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                     <input
@@ -360,9 +461,9 @@ const App = () => {
                   <button
                     type="submit"
                     disabled={!file}
-                    className="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 dark:disabled:bg-purple-900 text-white font-medium py-2 px-4 rounded-lg transition-colors shadow-sm"
+                    className={`w-full text-white font-medium py-2 px-4 rounded-lg transition-colors shadow-sm ${!token ? 'bg-gray-400 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 disabled:bg-purple-300 dark:disabled:bg-purple-900'}`}
                   >
-                    開始上傳
+                    {!token ? '請先登入 (Admin)' : '開始上傳'}
                   </button>
                   {uploadMsg && <p className="text-sm text-center text-gray-600 dark:text-gray-400">{uploadMsg}</p>}
                 </form>
@@ -515,7 +616,7 @@ const App = () => {
                         <div className="col-span-5 font-medium text-gray-900 dark:text-gray-100 truncate">{user.name}</div>
                         <div className="col-span-3 text-gray-600 dark:text-gray-400">{user.age}</div>
                         <div className="col-span-4 text-right flex justify-end gap-2">
-                          {/* [新增] 編輯按鈕 */}
+                          {/* 編輯按鈕 (Public) */}
                           <button
                             onClick={() => openEditModal(user)}
                             className="text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 p-1.5 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20"
@@ -523,12 +624,13 @@ const App = () => {
                           >
                             <Pencil size={18} />
                           </button>
+                          {/* 刪除按鈕 (Protected) - 未登入時顯示鎖頭樣式或提示 */}
                           <button
                             onClick={() => handleDeleteUser(user.name)}
-                            className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
-                            title="刪除"
+                            className={`text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 ${!token ? 'opacity-50' : ''}`}
+                            title={!token ? "需登入才能刪除" : "刪除"}
                           >
-                            <Trash2 size={18} />
+                            {token ? <Trash2 size={18} /> : <Lock size={16} />}
                           </button>
                         </div>
                       </div>
@@ -537,7 +639,7 @@ const App = () => {
                 )}
               </div>
 
-              {/* [新增] 編輯視窗 (Modal) */}
+              {/* 編輯視窗 (Modal) */}
               {editingUser && (
                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                   <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-xl w-full max-w-sm mx-4 border border-gray-100 dark:border-gray-700">
@@ -577,6 +679,59 @@ const App = () => {
                         </button>
                       </div>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* [新增] 登入視窗 (Modal) */}
+              {showLoginModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                  <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-sm mx-4 border border-gray-200 dark:border-gray-700">
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <LogIn size={24} className="text-blue-600" /> 管理員登入
+                      </h3>
+                      <button onClick={() => setShowLoginModal(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                        <X size={24} />
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleLogin} className="space-y-5">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">帳號 (Username)</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="admin"
+                          className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={loginForm.username}
+                          onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">密碼 (Password)</label>
+                        <input
+                          type="password"
+                          required
+                          placeholder="secret"
+                          className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                          value={loginForm.password}
+                          onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700/50 p-3 rounded-lg">
+                        <p>預設測試帳號：admin</p>
+                        <p>預設測試密碼：secret</p>
+                      </div>
+
+                      <button
+                        type="submit"
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition-colors shadow-lg"
+                      >
+                        登入
+                      </button>
+                    </form>
                   </div>
                 </div>
               )}
